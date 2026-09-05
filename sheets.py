@@ -57,7 +57,9 @@ def add_entry(username: str, kategori: str, grup: str, nama: str, gallery: str):
 
 
 def find_entry(username: str):
-    """Cari baris berdasarkan username. Return (row_index, row_dict) atau (None, None)."""
+    """Cari baris berdasarkan username. Return (row_index, row_dict) atau (None, None).
+    Kalau usernamenya ada di lebih dari 1 baris (misal beda gallery), ini cuma
+    kasih yang PERTAMA ketemu — pakai find_entries() kalau butuh semuanya."""
     ws = get_sheet()
     records = ws.get_all_records()
     for offset, row in enumerate(records):
@@ -65,6 +67,20 @@ def find_entry(username: str):
             row_index = offset + 2  # +2: baris 1 header, get_all_records index dari 0
             return row_index, row
     return None, None
+
+
+def find_entries(username: str):
+    """Cari SEMUA baris yang match username (bisa lebih dari 1, misal beda gallery/kategori).
+    Return list of (row_index, row_dict), urut sesuai urutan baris di sheet."""
+    ws = get_sheet()
+    records = ws.get_all_records()
+    target = username.strip().lower()
+    result = []
+    for offset, row in enumerate(records):
+        if str(row.get("Username", "")).strip().lower() == target:
+            row_index = offset + 2
+            result.append((row_index, row))
+    return result
 
 
 def delete_entry(row_index: int):
