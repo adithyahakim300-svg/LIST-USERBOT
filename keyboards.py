@@ -20,6 +20,7 @@ TEXT_INPUT_CATEGORIES = {"Aktor", "Aktris", "Multi Character", "Trainee", "2D/An
 GALLERY_CODES = {
     "valoroum": "VL",
     "iddistrict": "ID",
+    "bomnax": "BX",
 }
 CODE_TO_GALLERY = {v: k for k, v in GALLERY_CODES.items()}
 GALLERY_LIST = list(GALLERY_CODES.keys())
