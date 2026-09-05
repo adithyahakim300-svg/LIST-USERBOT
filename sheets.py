@@ -31,8 +31,23 @@ def get_sheet():
     except WorksheetNotFound:
         worksheet = sh.add_worksheet(title=sheet_name, rows=2000, cols=len(HEADER))
         worksheet.append_row(HEADER)
+
+    _ensure_gallery_header(worksheet)
     _worksheet = worksheet
     return worksheet
+
+
+def _ensure_gallery_header(worksheet):
+    """Pastikan header kolom terakhir ('Gallery') selalu terisi.
+
+    Sheet lama (dibuat sebelum kolom Gallery ada) tidak otomatis punya
+    header ini, walau datanya sudah tersimpan di kolom F. Cek dan
+    perbaiki sendiri di sini supaya tidak bergantung pada edit manual.
+    """
+    gallery_col = len(HEADER)  # posisi kolom "Gallery"
+    current_header = worksheet.row_values(1)
+    if len(current_header) < gallery_col or current_header[gallery_col - 1] != "Gallery":
+        worksheet.update_cell(1, gallery_col, "Gallery")
 
 
 def add_entry(username: str, kategori: str, grup: str, nama: str, gallery: str):
