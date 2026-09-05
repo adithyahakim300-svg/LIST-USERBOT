@@ -3,7 +3,7 @@ import asyncio
 import logging
 from io import BytesIO
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -56,6 +56,77 @@ async def lihat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Pilih gallery yang mau dilihat:", reply_markup=gallery_keyboard_lihat()
     )
+
+
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tambah 1 username manual tanpa screenshot: /add @username"""
+    if not context.args:
+        await update.message.reply_text(
+            "Pakai format: /add @username\nContoh: /add @Minwooky"
+        )
+        return
+
+    username = context.args[0].lstrip("@").strip()
+    if not username:
+        await update.message.reply_text(
+            "Pakai format: /add @username\nContoh: /add @Minwooky"
+        )
+        return
+
+    # Tambahkan ke antrian yang sedang berjalan (kalau ada), atau mulai antrian baru.
+    pending = context.user_data.setdefault("pending", [])
+    context.user_data.setdefault("nama_store", {})
+    index = len(pending)
+    pending.append(username)
+
+    await update.message.reply_text(
+        f"@{username}\nPilih kategori:", reply_markup=category_keyboard(index)
+    )
+
+
+async def hapus_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cari semua lokasi username, lalu kasih tombol hapus per-lokasi: /hapus @username"""
+    if not context.args:
+        await update.message.reply_text(
+            "Pakai format: /hapus @username\nContoh: /hapus @Minwooky"
+        )
+        return
+
+    username = context.args[0].lstrip("@").strip()
+    if not username:
+        await update.message.reply_text(
+            "Pakai format: /hapus @username\nContoh: /hapus @Minwooky"
+        )
+        return
+
+    try:
+        entries = await asyncio.to_thread(sheets.find_entries, username)
+    except Exception as e:
+        logger.error("Gagal baca dari Sheets: %s", e)
+        await update.message.reply_text("Gagal cek rekap, coba lagi sebentar lagi.")
+        return
+
+    if not entries:
+        await update.message.reply_text(f"@{username} tidak ditemukan di rekap.")
+        return
+
+    lines = [f"@{username} ditemukan di {len(entries)} lokasi:"]
+    buttons = []
+    for i, (row_index, row) in enumerate(entries, start=1):
+        lokasi = row.get("Kategori", "")
+        if row.get("Grup"):
+            lokasi += f" / {row['Grup']}"
+        if row.get("Nama"):
+            lokasi += f" / {row['Nama']}"
+        if row.get("Gallery"):
+            lokasi += f" (@{row['Gallery']})"
+        lines.append(f"{i}. {lokasi}")
+        buttons.append(
+            [InlineKeyboardButton(f"🗑 Hapus #{i}", callback_data=f"delhap|{row_index}|{username}")]
+        )
+    buttons.append([InlineKeyboardButton("❌ Batal", callback_data="delhap_batal")])
+
+    await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
 
 
 # ---------- Alur input dari screenshot ----------
@@ -333,6 +404,46 @@ async def handle_delete_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(f"@{username} sudah dihapus dari rekap.")
 
 
+async def handle_delhap_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tombol hapus/batal dari hasil /hapus (bisa lebih dari 1 lokasi per username)."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "delhap_batal":
+        await query.edit_message_text("Dibatalkan.")
+        return
+
+    _, row_index_str, username = query.data.split("|")
+    row_index = int(row_index_str)
+
+    try:
+        ws = sheets.get_sheet()
+        current_row = await asyncio.to_thread(ws.row_values, row_index)
+    except Exception as e:
+        logger.error("Gagal baca baris sebelum hapus: %s", e)
+        await query.edit_message_text("Gagal hapus dari rekap, coba lagi sebentar lagi.")
+        return
+
+    # Validasi baris masih username yang sama, jaga-jaga kalau ada baris lain
+    # yang sudah lebih dulu dihapus dari tombol lain di pesan yang sama
+    # (posisi baris di bawahnya jadi geser).
+    current_username = current_row[0].strip().lower() if current_row else ""
+    if current_username != username.strip().lower():
+        await query.edit_message_text(
+            "Data sudah berubah (kemungkinan ada baris lain yang baru dihapus).\n"
+            "Jalankan /hapus lagi buat lihat lokasi terbaru."
+        )
+        return
+
+    try:
+        await asyncio.to_thread(sheets.delete_entry, row_index)
+    except Exception as e:
+        logger.error("Gagal hapus dari Sheets: %s", e)
+        await query.edit_message_text("Gagal hapus dari rekap, coba lagi sebentar lagi.")
+        return
+    await query.edit_message_text(f"@{username} (lokasi ini) sudah dihapus dari rekap.")
+
+
 # ---------- /lihat: browsing rekap ----------
 
 async def handle_lihat_gallery(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,12 +538,32 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+async def post_init(app: Application):
+    """Daftarkan daftar command supaya muncul di menu '/' Telegram."""
+    await app.bot.set_my_commands(
+        [
+            BotCommand("start", "Mulai & lihat cara pakai bot"),
+            BotCommand("add", "Tambah 1 username manual: /add @username"),
+            BotCommand("lihat", "Lihat rekap yang sudah tersimpan"),
+            BotCommand("hapus", "Hapus username dari rekap: /hapus @username"),
+        ]
+    )
+
+
 def main():
     persistence = PicklePersistence(filepath="bot_data.pickle")
-    app = Application.builder().token(TELEGRAM_TOKEN).persistence(persistence).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .persistence(persistence)
+        .post_init(post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("lihat", lihat_command))
+    app.add_handler(CommandHandler("add", add_command))
+    app.add_handler(CommandHandler("hapus", hapus_command))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Callback mode "input baru" (index berupa angka)
@@ -442,6 +573,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_gallery_callback, pattern=r"^gal\|(?!lihat\|)\d"))
     app.add_handler(CallbackQueryHandler(handle_galtxt_callback, pattern=r"^galtxt\|"))
     app.add_handler(CallbackQueryHandler(handle_delete_callback, pattern=r"^del\|"))
+    app.add_handler(CallbackQueryHandler(handle_delhap_callback, pattern=r"^delhap"))
 
     # Callback mode "/lihat" (gallery -> kategori -> [grup] -> hasil)
     app.add_handler(CallbackQueryHandler(handle_lihat_gallery, pattern=r"^gal\|lihat\|"))
