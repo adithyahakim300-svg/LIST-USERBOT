@@ -402,8 +402,10 @@ def format_entries(kategori, entries, grup=None, gallery=None):
 
     by_sub: dict[str, list[str]] = {}
     for e in entries:
-        sub = e.get("Grup") if kategori in KPOP_CATEGORIES else e.get("Nama")
-        sub = sub or "-"
+        # Selalu grouping berdasarkan Nama (member untuk kpop, nama/based-on untuk lainnya).
+        # Kolom Grup tidak dipakai lagi di sini karena pada level ini nilainya
+        # sudah sama untuk semua entri (grup sudah dipilih sebelumnya).
+        sub = e.get("Nama") or "-"
         by_sub.setdefault(sub, []).append(e["Username"])
 
     lines = [judul]
